@@ -4,7 +4,12 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/Busenuryurdakul/cli-calculator/account"
 	"github.com/Busenuryurdakul/cli-calculator/calc"
+	"github.com/Busenuryurdakul/cli-calculator/logger"
+	"github.com/Busenuryurdakul/cli-calculator/reading"
+	"github.com/Busenuryurdakul/cli-calculator/sensor"
+	"github.com/Busenuryurdakul/cli-calculator/shape"
 	"github.com/Busenuryurdakul/cli-calculator/tempconv"
 )
 
@@ -19,6 +24,16 @@ func main() {
 		runCalculator(os.Args[2:])
 	case "temp":
 		runTemperature(os.Args[2:])
+	case "demo":
+		runStructDemo()
+	case "methods":
+		runMethodsDemo()
+	case "interfaces":
+		runInterfacesDemo()
+	case "compose":
+		runComposeDemo()
+	case "library":
+		runLibraryDemo()
 	default:
 		runCalculator(os.Args[1:])
 	}
@@ -79,10 +94,168 @@ func runTemperature(args []string) {
 	fmt.Println(result)
 }
 
+func runStructDemo() {
+	// Positional-style literal (keyed here for clarity; equivalent: {"Izmir", 25.0, "station"})
+	literal := reading.DemoPositional()
+
+	// Keyed struct literal
+	keyed := reading.TemperatureReading{
+		Location: "Ankara",
+		Celsius:  22.5,
+		Source:   "sensor",
+	}
+
+	// Pointer via constructor
+	ptr := reading.New("Antalya", 30.0, "api")
+
+	// Pointer to struct literal
+	cold := &reading.TemperatureReading{
+		Location: "Erzurum",
+		Celsius:  -5.0,
+		Source:   "manual",
+	}
+
+	fmt.Println("=== Default formatting (Go syntax) ===")
+	fmt.Printf("%#v\n", literal)
+
+	fmt.Println("\n=== Custom String() output ===")
+	fmt.Println(keyed)
+	fmt.Println(ptr)
+
+	fmt.Println("\n=== Method preview ===")
+	fmt.Printf("%s is freezing: %v\n", cold, cold.IsFreezing())
+	cold.UpdateCelsius(2.0)
+	fmt.Printf("After UpdateCelsius: %s\n", cold)
+}
+
+func runMethodsDemo() {
+	original := reading.TemperatureReading{Location: "Ankara", Celsius: 10, Source: "sensor"}
+
+	fmt.Println("=== Value receiver: copy semantics ===")
+	scaled := original.ScaledCopy(3)
+	fmt.Printf("original: %.1f°C\n", original.Celsius)
+	fmt.Printf("scaled copy: %.1f°C\n", scaled.Celsius)
+
+	fmt.Println("\n=== Pointer receiver: mutation ===")
+	readingPtr := reading.New("Izmir", 10, "station")
+	fmt.Printf("before Scale: %.1f°C\n", readingPtr.Celsius)
+	readingPtr.Scale(2)
+	fmt.Printf("after Scale: %.1f°C\n", readingPtr.Celsius)
+
+	readingPtr.Relocate("Antalya")
+	fmt.Printf("after Relocate: %s\n", readingPtr)
+
+	fmt.Println("\n=== Method sets ===")
+	fmt.Println(reading.MethodSetSummary())
+}
+
+func runInterfacesDemo() {
+	readings := []sensor.Measurer{
+		sensor.StationReading{Name: "Ankara", Celsius: 22.5},
+		sensor.ManualGauge{Location: "Izmir", Celsius: 18},
+		reading.TemperatureReading{Location: "Antalya", Celsius: 30, Source: "api"},
+	}
+
+	fmt.Println("=== Interface values (polymorphism) ===")
+	for _, line := range sensor.PrintReadings(readings) {
+		fmt.Println(line)
+	}
+
+	fmt.Println("\n=== Nil interface vs typed nil ===")
+	var nilIface sensor.Measurer
+	fmt.Printf("untyped nil interface IsNil: %v\n", sensor.IsNil(nilIface))
+
+	var nilStation *sensor.StationReading
+	var typedNilIface sensor.Measurer = nilStation
+	fmt.Printf("typed nil in interface m == nil: %v\n", typedNilIface == nil)
+	fmt.Printf("typed nil detected by IsNil: %v\n", sensor.IsNil(typedNilIface))
+
+	if value, ok := sensor.SafeMeasure(typedNilIface); ok {
+		fmt.Println("unexpected value:", value)
+	} else {
+		fmt.Println("SafeMeasure correctly refused typed nil")
+	}
+
+	fmt.Println("\n=== Summary ===")
+	fmt.Println(sensor.NilInterfaceSummary())
+}
+
+func runComposeDemo() {
+	user := account.User{
+		Person: account.Person{
+			Name:  "Ayse",
+			Email: "ayse@example.com",
+		},
+		LastLogin: "2026-08-15",
+	}
+
+	admin := account.Admin{
+		User: account.User{
+			Person: account.Person{
+				Name:  "Mehmet",
+				Email: "admin@example.com",
+			},
+		},
+		Department: "Platform",
+	}
+
+	fmt.Println("=== Promoted fields ===")
+	fmt.Printf("user.Name (from embedded Person): %s\n", user.Name)
+
+	fmt.Println("\n=== Method overrides ===")
+	fmt.Printf("Person.Role(): %s\n", user.Person.Role())
+	fmt.Printf("User.Role(): %s\n", user.Role())
+	fmt.Printf("Admin.Role(): %s\n", admin.Role())
+
+	fmt.Println("\n=== Composed domain via interface ===")
+	accounts := []account.Account{user, admin}
+	for _, a := range accounts {
+		fmt.Printf("%s -> role=%s dashboard=%v settings=%v\n",
+			a.Describe(),
+			a.Role(),
+			a.CanAccess("dashboard"),
+			a.CanAccess("settings"),
+		)
+	}
+
+	fmt.Println("\n=== Summary ===")
+	fmt.Println(account.ComposeSummary())
+}
+
+func runLibraryDemo() {
+	shapes := []shape.Shape{
+		shape.Circle{Radius: 3},
+		shape.Rectangle{Width: 4, Height: 5},
+	}
+
+	fmt.Println("=== Shape library ===")
+	for _, s := range shapes {
+		fmt.Printf("area=%.2f perimeter=%.2f\n", s.Area(), s.Perimeter())
+	}
+
+	fmt.Println("\n=== Logger abstraction ===")
+	loggers := []logger.Logger{
+		logger.ConsoleLogger{},
+		logger.NoopLogger{},
+	}
+	for _, log := range loggers {
+		logger.LogStartup(log, "cli-calculator")
+	}
+
+	fmt.Println("\n=== Code review notes ===")
+	fmt.Println(shape.ReviewSummary())
+	fmt.Println(logger.ReviewSummary())
+}
+
 func printUsage() {
 	fmt.Fprintln(os.Stderr, "usage:")
 	fmt.Fprintln(os.Stderr, "  cli-calculator <num> <op> <num>       calculator (+, -, *, /)")
 	fmt.Fprintln(os.Stderr, "  cli-calculator calc <num> <op> <num> same as above")
 	fmt.Fprintln(os.Stderr, "  cli-calculator temp c2f <celsius>     celsius to fahrenheit")
 	fmt.Fprintln(os.Stderr, "  cli-calculator temp f2c <fahrenheit>  fahrenheit to celsius")
+	fmt.Fprintln(os.Stderr, "  cli-calculator demo                   struct initialization demo")
+	fmt.Fprintln(os.Stderr, "  cli-calculator methods                value vs pointer receiver demo")
+	fmt.Fprintln(os.Stderr, "  cli-calculator interfaces             small interfaces and nil demo")
+	fmt.Fprintln(os.Stderr, "  cli-calculator compose                struct embedding and composition demo")
+	fmt.Fprintln(os.Stderr, "  cli-calculator library                shape and logger library demo")
 }
