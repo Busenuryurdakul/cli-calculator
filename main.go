@@ -1,12 +1,15 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/Busenuryurdakul/cli-calculator/account"
 	"github.com/Busenuryurdakul/cli-calculator/calc"
 	"github.com/Busenuryurdakul/cli-calculator/logger"
+	"github.com/Busenuryurdakul/cli-calculator/pipeline"
 	"github.com/Busenuryurdakul/cli-calculator/reading"
 	"github.com/Busenuryurdakul/cli-calculator/sensor"
 	"github.com/Busenuryurdakul/cli-calculator/shape"
@@ -34,6 +37,13 @@ func main() {
 		runComposeDemo()
 	case "library":
 		runLibraryDemo()
+	case "errors":
+		runErrorsDemo()
+	case "pipeline":
+		if err := runPipeline(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	default:
 		runCalculator(os.Args[1:])
 	}
@@ -247,6 +257,62 @@ func runLibraryDemo() {
 	fmt.Println(logger.ReviewSummary())
 }
 
+func runErrorsDemo() {
+	examples := []struct {
+		title                           string
+		location, celsius, source, unit string
+	}{
+		{title: "parse failure", location: "Ankara", celsius: "abc", source: "sensor", unit: "C"},
+		{title: "empty location", location: "", celsius: "22.5", source: "sensor", unit: "C"},
+		{title: "below absolute zero", location: "Space", celsius: "-400", source: "probe", unit: "C"},
+		{title: "invalid unit", location: "Izmir", celsius: "18", source: "manual", unit: "K"},
+		{title: "success", location: "Ankara", celsius: "22.5", source: "sensor", unit: "F"},
+	}
+
+	fmt.Println("=== Return (T, error) and wrap with %w ===")
+	for _, ex := range examples {
+		result, err := pipeline.Process(ex.location, ex.celsius, ex.source, ex.unit)
+		if err != nil {
+			fmt.Printf("%s: %v\n", ex.title, err)
+			fmt.Printf("  classify: %s\n", pipeline.Classify(err))
+			fmt.Printf("  errors.Is BelowAbsoluteZero: %v\n", errors.Is(err, pipeline.ErrBelowAbsoluteZero))
+
+			var parseErr *pipeline.ParseError
+			if errors.As(err, &parseErr) {
+				fmt.Printf("  errors.As ParseError: input=%q inner=%v\n", parseErr.Input, parseErr.Err)
+			}
+			continue
+		}
+		fmt.Printf("%s: %s -> %.1f°%s\n", ex.title, result.Reading, result.Converted, strings.ToUpper(result.Unit[:1]))
+	}
+
+	fmt.Println("\n=== Fail fast ===")
+	fmt.Println("Process returns on the first error (parse, then validate, then convert).")
+	fmt.Println("That keeps handlers flat: if err != nil { return ..., err }")
+
+	fmt.Println("\n=== Summary ===")
+	fmt.Println(pipeline.ErrorSummary())
+}
+
+func runPipeline(args []string) error {
+	if len(args) < 3 || len(args) > 4 {
+		return errors.New("pipeline: expected <location> <celsius> <source> [C|F]")
+	}
+
+	unit := "C"
+	if len(args) == 4 {
+		unit = args[3]
+	}
+
+	result, err := pipeline.Process(args[0], args[1], args[2], unit)
+	if err != nil {
+		return fmt.Errorf("pipeline (%s): %w", pipeline.Classify(err), err)
+	}
+
+	fmt.Printf("%s -> %.1f°%s\n", result.Reading, result.Converted, strings.ToUpper(result.Unit[:1]))
+	return nil
+}
+
 func printUsage() {
 	fmt.Fprintln(os.Stderr, "usage:")
 	fmt.Fprintln(os.Stderr, "  cli-calculator <num> <op> <num>       calculator (+, -, *, /)")
@@ -258,4 +324,6 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  cli-calculator interfaces             small interfaces and nil demo")
 	fmt.Fprintln(os.Stderr, "  cli-calculator compose                struct embedding and composition demo")
 	fmt.Fprintln(os.Stderr, "  cli-calculator library                shape and logger library demo")
+	fmt.Fprintln(os.Stderr, "  cli-calculator errors                 error values, wrapping, Is/As demo")
+	fmt.Fprintln(os.Stderr, "  cli-calculator pipeline <loc> <c> <src> [C|F]  fail-fast reading pipeline")
 }
