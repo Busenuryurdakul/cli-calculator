@@ -74,6 +74,13 @@ func TestCalculate(t *testing.T) {
 	}
 }
 
+func TestParseNumberEmptySentinel(t *testing.T) {
+	_, err := ParseNumber("")
+	if !errors.Is(err, ErrEmptyInput) {
+		t.Fatalf("got %v, want ErrEmptyInput", err)
+	}
+}
+
 func TestCalculateFloatingPoint(t *testing.T) {
 	got, err := Calculate(0.1, 0.2, "+")
 	if err != nil {

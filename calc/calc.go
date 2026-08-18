@@ -9,11 +9,12 @@ import (
 var (
 	ErrDivisionByZero = errors.New("division by zero")
 	ErrInvalidOp      = errors.New("invalid operator")
+	ErrEmptyInput     = errors.New("empty input")
 )
 
 func ParseNumber(s string) (float64, error) {
 	if s == "" {
-		return 0, errors.New("empty input")
+		return 0, ErrEmptyInput
 	}
 	n, err := strconv.ParseFloat(s, 64)
 	if err != nil {
