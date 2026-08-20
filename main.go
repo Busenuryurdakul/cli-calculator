@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/Busenuryurdakul/cli-calculator/account"
@@ -11,6 +12,7 @@ import (
 	"github.com/Busenuryurdakul/cli-calculator/logger"
 	"github.com/Busenuryurdakul/cli-calculator/pipeline"
 	"github.com/Busenuryurdakul/cli-calculator/reading"
+	"github.com/Busenuryurdakul/cli-calculator/report"
 	"github.com/Busenuryurdakul/cli-calculator/sensor"
 	"github.com/Busenuryurdakul/cli-calculator/shape"
 	"github.com/Busenuryurdakul/cli-calculator/store"
@@ -47,6 +49,11 @@ func main() {
 		}
 	case "collections":
 		runCollectionsDemo()
+	case "files":
+		if err := runFilesDemo(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	default:
 		runCalculator(os.Args[1:])
 	}
@@ -375,6 +382,90 @@ func runCollectionsDemo() {
 	fmt.Println(store.CollectionSummary())
 }
 
+func runFilesDemo() error {
+	dir, err := os.MkdirTemp("", "cli-calculator-report-*")
+	if err != nil {
+		return fmt.Errorf("files demo: %w", err)
+	}
+	defer os.RemoveAll(dir)
+
+	items := []reading.TemperatureReading{
+		{Location: "Ankara", Celsius: 10, Source: "sensor"},
+		{Location: "Izmir", Celsius: 20, Source: "station"},
+		{Location: "Antalya", Celsius: 30, Source: "api"},
+	}
+
+	allPath := filepath.Join(dir, "all.txt")
+	linesPath := filepath.Join(dir, "lines.txt")
+	copyPath := filepath.Join(dir, "copy.txt")
+
+	fmt.Println("=== Write files ===")
+	if err := report.WriteAll(allPath, items); err != nil {
+		return err
+	}
+	if err := report.WriteBuffered(linesPath, items); err != nil {
+		return err
+	}
+	fmt.Println("os.WriteFile:", allPath)
+	fmt.Println("bufio.Writer:", linesPath)
+
+	fmt.Println("\n=== Read files ===")
+	fromAll, err := report.ReadAll(allPath)
+	if err != nil {
+		return err
+	}
+	fromLines, err := report.ReadLines(linesPath)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("os.ReadFile: %d readings\n", len(fromAll))
+	fmt.Printf("bufio.Scanner: %d readings\n", len(fromLines))
+	for i, item := range fromLines {
+		fmt.Printf("%d: %s\n", i, item)
+	}
+
+	fmt.Println("\n=== io.Reader / io.Writer ===")
+	src, err := os.Open(allPath)
+	if err != nil {
+		return fmt.Errorf("files demo: %w", err)
+	}
+	dst, err := os.Create(copyPath)
+	if err != nil {
+		src.Close()
+		return fmt.Errorf("files demo: %w", err)
+	}
+	n, err := report.Copy(dst, src)
+	src.Close()
+	closeErr := dst.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return fmt.Errorf("files demo: %w", closeErr)
+	}
+	fmt.Printf("io.Copy wrote %d bytes to %s\n", n, copyPath)
+
+	copied, err := os.Open(copyPath)
+	if err != nil {
+		return fmt.Errorf("files demo: %w", err)
+	}
+	defer copied.Close()
+	lines, err := report.CountLines(copied)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("bufio line count: %d\n", lines)
+
+	fmt.Println("\n=== Missing file error ===")
+	_, err = report.ReadAll(filepath.Join(dir, "missing.txt"))
+	fmt.Println(err)
+	fmt.Printf("errors.Is(err, os.ErrNotExist): %v\n", errors.Is(err, os.ErrNotExist))
+
+	fmt.Println("\n=== Summary ===")
+	fmt.Println(report.FileSummary())
+	return nil
+}
+
 func printUsage() {
 	fmt.Fprintln(os.Stderr, "usage:")
 	fmt.Fprintln(os.Stderr, "  cli-calculator <num> <op> <num>       calculator (+, -, *, /)")
@@ -389,4 +480,5 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  cli-calculator errors                 error values, wrapping, Is/As demo")
 	fmt.Fprintln(os.Stderr, "  cli-calculator pipeline <loc> <c> <src> [C|F]  fail-fast reading pipeline")
 	fmt.Fprintln(os.Stderr, "  cli-calculator collections            slices, maps, make, shared mutation")
+	fmt.Fprintln(os.Stderr, "  cli-calculator files                  read/write reports with io and bufio")
 }
