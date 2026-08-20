@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"github.com/Busenuryurdakul/cli-calculator/account"
 	"github.com/Busenuryurdakul/cli-calculator/calc"
 	"github.com/Busenuryurdakul/cli-calculator/logger"
+	"github.com/Busenuryurdakul/cli-calculator/payload"
 	"github.com/Busenuryurdakul/cli-calculator/pipeline"
 	"github.com/Busenuryurdakul/cli-calculator/reading"
 	"github.com/Busenuryurdakul/cli-calculator/report"
@@ -51,6 +53,11 @@ func main() {
 		runCollectionsDemo()
 	case "files":
 		if err := runFilesDemo(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	case "json":
+		if err := runJSONDemo(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -466,6 +473,65 @@ func runFilesDemo() error {
 	return nil
 }
 
+func runJSONDemo() error {
+	items := []payload.Reading{
+		payload.FromDomain(reading.TemperatureReading{Location: "Ankara", Celsius: 10, Source: "sensor"}, payload.Note("dry heat")),
+		payload.FromDomain(reading.TemperatureReading{Location: "Izmir", Celsius: 20, Source: ""}, nil),
+	}
+
+	fmt.Println("=== json.Marshal and struct tags ===")
+	data, err := payload.Marshal(items)
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(data))
+
+	fmt.Println("\n=== json.Unmarshal (unknown fields ignored) ===")
+	withExtra := []byte(`[{"location":"Van","celsius":-2,"source":"station","mystery":true}]`)
+	parsed, err := payload.Unmarshal(withExtra)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%+v (note=%v)\n", parsed[0], parsed[0].Note)
+
+	fmt.Println("\n=== json.Encoder / json.Decoder ===")
+	var buf bytes.Buffer
+	if err := payload.Encode(&buf, items); err != nil {
+		return err
+	}
+	fmt.Print(buf.String())
+	decoded, err := payload.Decode(&buf)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("decoded %d readings; first note=%q\n", len(decoded), *decoded[0].Note)
+
+	fmt.Println("\n=== DecodeStrict rejects unknown fields ===")
+	_, err = payload.DecodeStrict(strings.NewReader(string(withExtra)))
+	fmt.Println(err)
+
+	fmt.Println("\n=== optional zeros vs omitempty ===")
+	zeros, err := payload.Marshal([]payload.Reading{{
+		Location: "Kars",
+		Celsius:  0,
+		Note:     payload.Note(""),
+		Humidity: payload.Float(0),
+		Internal: "not-in-json",
+	}})
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(zeros))
+
+	fmt.Println("\n=== trailing JSON rejected ===")
+	_, err = payload.Decode(strings.NewReader(`[{"location":"A","celsius":1}][]`))
+	fmt.Println(err)
+
+	fmt.Println("\n=== Summary ===")
+	fmt.Println(payload.JSONSummary())
+	return nil
+}
+
 func printUsage() {
 	fmt.Fprintln(os.Stderr, "usage:")
 	fmt.Fprintln(os.Stderr, "  cli-calculator <num> <op> <num>       calculator (+, -, *, /)")
@@ -481,4 +547,5 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  cli-calculator pipeline <loc> <c> <src> [C|F]  fail-fast reading pipeline")
 	fmt.Fprintln(os.Stderr, "  cli-calculator collections            slices, maps, make, shared mutation")
 	fmt.Fprintln(os.Stderr, "  cli-calculator files                  read/write reports with io and bufio")
+	fmt.Fprintln(os.Stderr, "  cli-calculator json                   marshal, unmarshal, and stream JSON")
 }
