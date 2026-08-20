@@ -2,14 +2,19 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Busenuryurdakul/cli-calculator/account"
 	"github.com/Busenuryurdakul/cli-calculator/calc"
+	"github.com/Busenuryurdakul/cli-calculator/concurrent"
 	"github.com/Busenuryurdakul/cli-calculator/logger"
 	"github.com/Busenuryurdakul/cli-calculator/payload"
 	"github.com/Busenuryurdakul/cli-calculator/pipeline"
@@ -64,6 +69,11 @@ func main() {
 		}
 	case "summarize":
 		if err := runSummarize(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	case "concurrent":
+		if err := runConcurrentDemo(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -611,6 +621,93 @@ func runSummarizeDemo() error {
 	return nil
 }
 
+func runConcurrentDemo() error {
+	fmt.Println("=== Unbuffered channel ===")
+	fmt.Println("Ping():", concurrent.Ping())
+
+	fmt.Println("\n=== Buffered channel, close, range ===")
+	fmt.Println("DrainBuffer(4):", concurrent.DrainBuffer(4))
+
+	fmt.Println("\n=== Worker pool ===")
+	jobs := []concurrent.Job{{N: 2}, {N: 3}, {N: 4}, {N: 5}}
+	fmt.Println("RunPool:", concurrent.RunPool(jobs, 2))
+
+	fmt.Println("\n=== select, timeout, cancel, backpressure ===")
+	idle := make(chan int)
+	_, received := concurrent.RecvTimeout(idle, 30*time.Millisecond)
+	fmt.Println("RecvTimeout on idle channel received:", received)
+
+	ready := make(chan int, 1)
+	ready <- 9
+	v, ok := concurrent.RecvTimeout(ready, time.Second)
+	fmt.Printf("RecvTimeout with value: %d ok=%v\n", v, ok)
+
+	buf := make(chan int, 1)
+	fmt.Printf("TrySend first=%v second=%v (drop when full)\n", concurrent.TrySend(buf, 1), concurrent.TrySend(buf, 2))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	work := make(chan int)
+	done := make(chan []int)
+	go func() {
+		done <- concurrent.SquareUntilCancel(ctx, work)
+	}()
+	work <- 6
+	work <- 7
+	cancel()
+	fmt.Println("SquareUntilCancel:", <-done)
+
+	fmt.Println("\n=== Mutex, Once, atomic ===")
+	var counter concurrent.SafeCounter
+	counter.Add(3)
+	counter.Add(4)
+	fmt.Println("SafeCounter:", counter.Value())
+
+	var once concurrent.OnceValue
+	fmt.Printf("OnceValue=%s inits=%d\n", once.Load(), once.Inits())
+	_ = once.Load()
+	fmt.Printf("OnceValue again inits=%d\n", once.Inits())
+	fmt.Println("AtomicAdds(8):", concurrent.AtomicAdds(8))
+	hits := concurrent.NewSafeMap()
+	hits.Add("demo", 2)
+	hits.Add("demo", 3)
+	fmt.Println("SafeMap demo:", hits.Get("demo"))
+
+	fmt.Println("\n=== Concurrent downloader ===")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/slow") {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(time.Second):
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(r.URL.Path))
+	}))
+	defer srv.Close()
+
+	urls := []string{srv.URL + "/alpha", srv.URL + "/beta"}
+	results := concurrent.FetchAll(context.Background(), srv.Client(), urls)
+	for _, r := range results {
+		fmt.Printf("FetchAll %s status=%d body=%s err=%v\n", r.URL, r.Status, r.Body, r.Err)
+	}
+
+	fmt.Println("\n=== Timeout fetch ===")
+	fast := concurrent.FetchWithTimeout(srv.Client(), srv.URL+"/ok", time.Second)
+	fmt.Printf("fast: status=%d err=%v\n", fast.Status, fast.Err)
+	slow := concurrent.FetchWithTimeout(srv.Client(), srv.URL+"/slow", 25*time.Millisecond)
+	fmt.Printf("slow: errors.Is DeadlineExceeded=%v\n", errors.Is(slow.Err, context.DeadlineExceeded))
+
+	fmt.Println("\n=== Generate → square → collect ===")
+	fmt.Println("SquarePipeline(5):", concurrent.SquarePipeline(5))
+
+	fmt.Println("\n=== Channels vs mutexes ===")
+	fmt.Println(concurrent.CompareSummary())
+	fmt.Println("\n=== Summary ===")
+	fmt.Println(concurrent.ConcurrentSummary())
+	return nil
+}
+
 func printUsage() {
 	fmt.Fprintln(os.Stderr, "usage:")
 	fmt.Fprintln(os.Stderr, "  cli-calculator <num> <op> <num>       calculator (+, -, *, /)")
@@ -628,4 +725,5 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  cli-calculator files                  read/write reports with io and bufio")
 	fmt.Fprintln(os.Stderr, "  cli-calculator json                   marshal, unmarshal, and stream JSON")
 	fmt.Fprintln(os.Stderr, "  cli-calculator summarize [config.json] load config, count words, write JSON")
+	fmt.Fprintln(os.Stderr, "  cli-calculator concurrent             channels, select, sync, and pipelines")
 }
