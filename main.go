@@ -18,6 +18,7 @@ import (
 	"github.com/Busenuryurdakul/cli-calculator/sensor"
 	"github.com/Busenuryurdakul/cli-calculator/shape"
 	"github.com/Busenuryurdakul/cli-calculator/store"
+	"github.com/Busenuryurdakul/cli-calculator/summarize"
 	"github.com/Busenuryurdakul/cli-calculator/tempconv"
 )
 
@@ -58,6 +59,11 @@ func main() {
 		}
 	case "json":
 		if err := runJSONDemo(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	case "summarize":
+		if err := runSummarize(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -532,6 +538,79 @@ func runJSONDemo() error {
 	return nil
 }
 
+func runSummarize(args []string) error {
+	if len(args) == 1 {
+		summary, err := summarize.Run(args[0])
+		if err != nil {
+			return err
+		}
+		fmt.Printf("counted %d words (%d unique) from %s\n", summary.TotalWords, summary.UniqueWords, summary.Source)
+		return nil
+	}
+	if len(args) != 0 {
+		return errors.New("summarize: expected [config.json]")
+	}
+	return runSummarizeDemo()
+}
+
+func runSummarizeDemo() error {
+	dir, err := os.MkdirTemp("", "cli-calculator-summarize-*")
+	if err != nil {
+		return fmt.Errorf("summarize demo: %w", err)
+	}
+	defer os.RemoveAll(dir)
+
+	input := filepath.Join(dir, "notes.txt")
+	output := filepath.Join(dir, "summary.json")
+	configPath := filepath.Join(dir, "config.json")
+
+	if err := os.WriteFile(input, []byte("Go go maps maps maps\n"), 0o644); err != nil {
+		return fmt.Errorf("summarize demo: %w", err)
+	}
+	configJSON := "{\n  \"input\": \"notes.txt\",\n  \"output\": \"summary.json\",\n  \"min_count\": 2\n}\n"
+	if err := os.WriteFile(configPath, []byte(configJSON), 0o644); err != nil {
+		return fmt.Errorf("summarize demo: %w", err)
+	}
+
+	fmt.Println("=== Happy path ===")
+	summary, err := summarize.Run(configPath)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("unique_words=%d total_words=%d frequencies=%v\n", summary.UniqueWords, summary.TotalWords, summary.Frequencies)
+	written, err := os.ReadFile(output)
+	if err != nil {
+		return fmt.Errorf("summarize demo: %w", err)
+	}
+	fmt.Println(string(written))
+
+	fmt.Println("=== Missing file ===")
+	_, err = summarize.LoadConfig(filepath.Join(dir, "missing.json"))
+	fmt.Println(err)
+	fmt.Printf("errors.Is(err, os.ErrNotExist): %v\n", errors.Is(err, os.ErrNotExist))
+
+	fmt.Println("\n=== Malformed JSON ===")
+	badJSON := filepath.Join(dir, "bad.json")
+	if err := os.WriteFile(badJSON, []byte(`{"input":`), 0o644); err != nil {
+		return fmt.Errorf("summarize demo: %w", err)
+	}
+	_, err = summarize.LoadConfig(badJSON)
+	fmt.Println(err)
+
+	fmt.Println("\n=== Empty input ===")
+	emptyTxt := filepath.Join(dir, "empty.txt")
+	if err := os.WriteFile(emptyTxt, []byte("\n  \n"), 0o644); err != nil {
+		return fmt.Errorf("summarize demo: %w", err)
+	}
+	_, err = summarize.CountWordsFile(emptyTxt)
+	fmt.Println(err)
+	fmt.Printf("errors.Is(err, ErrEmptyInput): %v\n", errors.Is(err, summarize.ErrEmptyInput))
+
+	fmt.Println("\n=== Summary ===")
+	fmt.Println(summarize.ToolSummary())
+	return nil
+}
+
 func printUsage() {
 	fmt.Fprintln(os.Stderr, "usage:")
 	fmt.Fprintln(os.Stderr, "  cli-calculator <num> <op> <num>       calculator (+, -, *, /)")
@@ -548,4 +627,5 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  cli-calculator collections            slices, maps, make, shared mutation")
 	fmt.Fprintln(os.Stderr, "  cli-calculator files                  read/write reports with io and bufio")
 	fmt.Fprintln(os.Stderr, "  cli-calculator json                   marshal, unmarshal, and stream JSON")
+	fmt.Fprintln(os.Stderr, "  cli-calculator summarize [config.json] load config, count words, write JSON")
 }
