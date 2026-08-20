@@ -13,6 +13,7 @@ import (
 	"github.com/Busenuryurdakul/cli-calculator/reading"
 	"github.com/Busenuryurdakul/cli-calculator/sensor"
 	"github.com/Busenuryurdakul/cli-calculator/shape"
+	"github.com/Busenuryurdakul/cli-calculator/store"
 	"github.com/Busenuryurdakul/cli-calculator/tempconv"
 )
 
@@ -44,6 +45,8 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
+	case "collections":
+		runCollectionsDemo()
 	default:
 		runCalculator(os.Args[1:])
 	}
@@ -313,6 +316,65 @@ func runPipeline(args []string) error {
 	return nil
 }
 
+func runCollectionsDemo() {
+	made := store.NewLog(4)
+	fmt.Println("=== make vs literal ===")
+	fmt.Println(store.FormatSnapshot("make([]T, 0, 4)", store.Stats(made)))
+
+	lit := store.LiteralLog(
+		reading.TemperatureReading{Location: "Ankara", Celsius: 10, Source: "sensor"},
+		reading.TemperatureReading{Location: "Izmir", Celsius: 20, Source: "station"},
+		reading.TemperatureReading{Location: "Antalya", Celsius: 30, Source: "api"},
+	)
+	fmt.Println(store.FormatSnapshot("literal 3 readings", store.Stats(lit)))
+
+	grown := store.Append(made,
+		reading.TemperatureReading{Location: "Ankara", Celsius: 10, Source: "sensor"},
+		reading.TemperatureReading{Location: "Izmir", Celsius: 20, Source: "station"},
+	)
+	fmt.Println("\n=== append, slice, copy ===")
+	fmt.Println(store.FormatSnapshot("append 2 into cap 4", store.Stats(grown)))
+	grown = store.Append(grown,
+		reading.TemperatureReading{Location: "Antalya", Celsius: 30, Source: "api"},
+		reading.TemperatureReading{Location: "Bursa", Celsius: 12, Source: "manual"},
+		reading.TemperatureReading{Location: "Van", Celsius: -2, Source: "station"},
+	)
+	fmt.Println(store.FormatSnapshot("append past capacity", store.Stats(grown)))
+
+	view := store.Subslice(lit, 0, 2)
+	cloned := store.IsolatedCopy(lit)
+	fmt.Println(store.FormatSnapshot("subslice [0:2]", store.Stats(view)))
+	fmt.Println(store.FormatSnapshot("isolated copy", store.Stats(cloned)))
+
+	fmt.Println("\n=== shared mutation surprises ===")
+	fmt.Printf("before overwrite: original[0]=%.0f copy[0]=%.0f\n", lit[0].Celsius, cloned[0].Celsius)
+	store.OverwriteFirst(view, 99)
+	fmt.Printf("after overwrite via subslice: original[0]=%.0f copy[0]=%.0f\n", lit[0].Celsius, cloned[0].Celsius)
+
+	shared := store.LiteralLog(
+		reading.TemperatureReading{Location: "A", Celsius: 1, Source: "demo"},
+		reading.TemperatureReading{Location: "B", Celsius: 2, Source: "demo"},
+		reading.TemperatureReading{Location: "C", Celsius: 3, Source: "demo"},
+	)
+	head := store.Subslice(shared, 0, 2)
+	_ = store.AppendWithinSharedCap(head, reading.TemperatureReading{Location: "X", Celsius: 99, Source: "demo"})
+	fmt.Printf("append on subslice overwrote shared[2]: %+v\n", shared[2])
+
+	fmt.Println("\n=== range over slice (stable order) ===")
+	for i, item := range lit {
+		fmt.Printf("%d: %s %.0f°C\n", i, item.Location, item.Celsius)
+	}
+
+	idx := store.IndexLiteral(lit...)
+	store.Put(idx, reading.TemperatureReading{Location: "Erzurum", Celsius: -5, Source: "manual"})
+	fmt.Println("\n=== range over map (order is unspecified) ===")
+	fmt.Printf("range keys (do not rely on order): %v\n", store.Locations(idx))
+	fmt.Printf("sorted keys:                       %v\n", store.LocationsSorted(idx))
+
+	fmt.Println("\n=== Summary ===")
+	fmt.Println(store.CollectionSummary())
+}
+
 func printUsage() {
 	fmt.Fprintln(os.Stderr, "usage:")
 	fmt.Fprintln(os.Stderr, "  cli-calculator <num> <op> <num>       calculator (+, -, *, /)")
@@ -326,4 +388,5 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  cli-calculator library                shape and logger library demo")
 	fmt.Fprintln(os.Stderr, "  cli-calculator errors                 error values, wrapping, Is/As demo")
 	fmt.Fprintln(os.Stderr, "  cli-calculator pipeline <loc> <c> <src> [C|F]  fail-fast reading pipeline")
+	fmt.Fprintln(os.Stderr, "  cli-calculator collections            slices, maps, make, shared mutation")
 }
