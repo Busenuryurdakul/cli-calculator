@@ -17,6 +17,7 @@ import (
 	"github.com/Busenuryurdakul/cli-calculator/calc"
 	"github.com/Busenuryurdakul/cli-calculator/concurrent"
 	"github.com/Busenuryurdakul/cli-calculator/logger"
+	"github.com/Busenuryurdakul/cli-calculator/notes"
 	"github.com/Busenuryurdakul/cli-calculator/payload"
 	"github.com/Busenuryurdakul/cli-calculator/pipeline"
 	"github.com/Busenuryurdakul/cli-calculator/reading"
@@ -80,6 +81,16 @@ func main() {
 		}
 	case "testing":
 		if err := runTestingDemo(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	case "notes":
+		if err := runNotesDemo(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	case "serve":
+		if err := runServe(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -760,6 +771,81 @@ func runTestingDemo() error {
 	return nil
 }
 
+func runNotesDemo() error {
+	var logs bytes.Buffer
+	h := notes.NewHandler(notes.NewStore(), &logs)
+
+	fmt.Println("=== Health, inspect, users ===")
+	for _, c := range []struct {
+		name, method, path, body string
+	}{
+		{name: "health", method: http.MethodGet, path: "/health"},
+		{name: "inspect", method: http.MethodGet, path: "/inspect"},
+		{name: "user", method: http.MethodGet, path: "/users/1"},
+		{name: "missing user", method: http.MethodGet, path: "/users/9"},
+	} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(c.method, c.path, nil))
+		fmt.Printf("%s: %d %s", c.name, rec.Code, rec.Body.String())
+	}
+
+	fmt.Println("\n=== Notes CRUD ===")
+	create := httptest.NewRecorder()
+	h.ServeHTTP(create, notesDemoRequest(http.MethodPost, "/notes", `{"title":"Buy milk","body":"2L"}`))
+	fmt.Printf("create: %d %s", create.Code, create.Body.String())
+
+	list := httptest.NewRecorder()
+	h.ServeHTTP(list, notesDemoRequest(http.MethodGet, "/notes", ""))
+	fmt.Printf("list: %d %s", list.Code, list.Body.String())
+
+	del := httptest.NewRecorder()
+	h.ServeHTTP(del, notesDemoRequest(http.MethodDelete, "/notes/1", ""))
+	fmt.Printf("delete: %d\n", del.Code)
+
+	fmt.Println("\n=== Problem details ===")
+	unauth := httptest.NewRecorder()
+	h.ServeHTTP(unauth, httptest.NewRequest(http.MethodGet, "/notes", nil))
+	fmt.Printf("no auth: %d %s", unauth.Code, unauth.Body.String())
+	bad := httptest.NewRecorder()
+	h.ServeHTTP(bad, notesDemoRequest(http.MethodPost, "/notes", `{"title":""}`))
+	fmt.Printf("empty title: %d %s", bad.Code, bad.Body.String())
+
+	fmt.Println("\n=== Middleware log ===")
+	fmt.Print(logs.String())
+	fmt.Println("=== Summary ===")
+	fmt.Println(notes.ServerSummary())
+	return nil
+}
+
+func notesDemoRequest(method, path, body string) *http.Request {
+	var rdr *strings.Reader
+	if body != "" {
+		rdr = strings.NewReader(body)
+	}
+	var req *http.Request
+	if rdr != nil {
+		req = httptest.NewRequest(method, path, rdr)
+	} else {
+		req = httptest.NewRequest(method, path, nil)
+	}
+	req.Header.Set("Authorization", "Bearer demo")
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return req
+}
+
+func runServe(args []string) error {
+	addr := "127.0.0.1:8080"
+	if len(args) == 1 {
+		addr = args[0]
+	} else if len(args) != 0 {
+		return errors.New("serve: expected [addr]")
+	}
+	fmt.Fprintf(os.Stderr, "listening on http://%s\n", addr)
+	return notes.ListenAndServe(addr, notes.NewHandler(notes.NewStore(), os.Stderr))
+}
+
 func printUsage() {
 	fmt.Fprintln(os.Stderr, "usage:")
 	fmt.Fprintln(os.Stderr, "  cli-calculator <num> <op> <num>       calculator (+, -, *, /)")
@@ -779,4 +865,6 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  cli-calculator summarize [config.json] load config, count words, write JSON")
 	fmt.Fprintln(os.Stderr, "  cli-calculator concurrent             channels, select, sync, and pipelines")
 	fmt.Fprintln(os.Stderr, "  cli-calculator testing                table tests, examples, and HTTP handlers")
+	fmt.Fprintln(os.Stderr, "  cli-calculator notes                  notes API demo (no real port)")
+	fmt.Fprintln(os.Stderr, "  cli-calculator serve [addr]           HTTP server (default 127.0.0.1:8080)")
 }
