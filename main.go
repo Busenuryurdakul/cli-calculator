@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Busenuryurdakul/cli-calculator/account"
+	"github.com/Busenuryurdakul/cli-calculator/api"
 	"github.com/Busenuryurdakul/cli-calculator/calc"
 	"github.com/Busenuryurdakul/cli-calculator/concurrent"
 	"github.com/Busenuryurdakul/cli-calculator/logger"
@@ -74,6 +75,11 @@ func main() {
 		}
 	case "concurrent":
 		if err := runConcurrentDemo(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	case "testing":
+		if err := runTestingDemo(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -708,6 +714,52 @@ func runConcurrentDemo() error {
 	return nil
 }
 
+func runTestingDemo() error {
+	fmt.Println("=== Exported calc API ===")
+	n, err := calc.ParseNumber("8")
+	if err != nil {
+		return err
+	}
+	sum, err := calc.Calculate(n, 2, "+")
+	if err != nil {
+		return err
+	}
+	fmt.Printf("ParseNumber(8)+2=%v\n", sum)
+
+	fmt.Println("\n=== JSON handler via httptest.NewRecorder ===")
+	h := api.Handler()
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{name: "health", method: http.MethodGet, path: "/health"},
+		{name: "add", method: http.MethodPost, path: "/calculate", body: `{"a":10,"op":"+","b":5}`},
+		{name: "zero", method: http.MethodPost, path: "/calculate", body: `{"a":0,"op":"*","b":3}`},
+		{name: "div zero", method: http.MethodPost, path: "/calculate", body: `{"a":1,"op":"/","b":0}`},
+	}
+	for _, c := range cases {
+		var rdr *strings.Reader
+		if c.body != "" {
+			rdr = strings.NewReader(c.body)
+		}
+		var req *http.Request
+		if rdr != nil {
+			req = httptest.NewRequest(c.method, c.path, rdr)
+		} else {
+			req = httptest.NewRequest(c.method, c.path, nil)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		fmt.Printf("%s: %d %s", c.name, rec.Code, rec.Body.String())
+	}
+
+	fmt.Println("\n=== Summary ===")
+	fmt.Println(api.TestingSummary())
+	return nil
+}
+
 func printUsage() {
 	fmt.Fprintln(os.Stderr, "usage:")
 	fmt.Fprintln(os.Stderr, "  cli-calculator <num> <op> <num>       calculator (+, -, *, /)")
@@ -726,4 +778,5 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  cli-calculator json                   marshal, unmarshal, and stream JSON")
 	fmt.Fprintln(os.Stderr, "  cli-calculator summarize [config.json] load config, count words, write JSON")
 	fmt.Fprintln(os.Stderr, "  cli-calculator concurrent             channels, select, sync, and pipelines")
+	fmt.Fprintln(os.Stderr, "  cli-calculator testing                table tests, examples, and HTTP handlers")
 }
