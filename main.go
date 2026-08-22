@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +17,8 @@ import (
 	"github.com/Busenuryurdakul/cli-calculator/api"
 	"github.com/Busenuryurdakul/cli-calculator/calc"
 	"github.com/Busenuryurdakul/cli-calculator/concurrent"
+	"github.com/Busenuryurdakul/cli-calculator/internal/bookmark"
+	"github.com/Busenuryurdakul/cli-calculator/internal/server"
 	"github.com/Busenuryurdakul/cli-calculator/logger"
 	"github.com/Busenuryurdakul/cli-calculator/notes"
 	"github.com/Busenuryurdakul/cli-calculator/payload"
@@ -91,6 +94,11 @@ func main() {
 		}
 	case "serve":
 		if err := runServe(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	case "bookmarks":
+		if err := runBookmarksDemo(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -846,6 +854,45 @@ func runServe(args []string) error {
 	return notes.ListenAndServe(addr, notes.NewHandler(notes.NewStore(), os.Stderr))
 }
 
+func runBookmarksDemo() error {
+	h := server.New(bookmark.NewMemoryStore())
+	hit := func(label, method, path, body string) *httptest.ResponseRecorder {
+		var rdr io.Reader
+		if body != "" {
+			rdr = strings.NewReader(body)
+		}
+		req := httptest.NewRequest(method, path, rdr)
+		switch method {
+		case http.MethodPost, http.MethodPut, http.MethodPatch:
+			req.Header.Set("Content-Type", "application/json")
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		fmt.Printf("%s: %d %s", label, rec.Code, rec.Body.String())
+		return rec
+	}
+
+	fmt.Println("=== Health and empty list ===")
+	hit("health", http.MethodGet, "/health", "")
+	hit("list", http.MethodGet, "/bookmarks", "")
+
+	fmt.Println("\n=== CRUD ===")
+	created := hit("create", http.MethodPost, "/bookmarks", `{"title":"Go","url":"https://go.dev","tags":["lang"]}`)
+	id := strings.TrimPrefix(created.Header().Get("Location"), "/bookmarks/")
+	hit("get", http.MethodGet, "/bookmarks/"+id, "")
+	hit("duplicate", http.MethodPost, "/bookmarks", `{"title":"Also","url":"https://go.dev"}`)
+	hit("put", http.MethodPut, "/bookmarks/"+id, `{"title":"Tour","url":"https://go.dev/tour"}`)
+	hit("patch", http.MethodPatch, "/bookmarks/"+id, `{"title":"Blog"}`)
+	hit("delete", http.MethodDelete, "/bookmarks/"+id, "")
+
+	fmt.Println("\n=== Unhappy paths ===")
+	hit("empty body", http.MethodPost, "/bookmarks", "")
+	hit("bad title", http.MethodPost, "/bookmarks", `{"title":"","url":"https://go.dev"}`)
+	hit("missing", http.MethodGet, "/bookmarks/"+id, "")
+	hit("bad id", http.MethodGet, "/bookmarks/nope", "")
+	return nil
+}
+
 func printUsage() {
 	fmt.Fprintln(os.Stderr, "usage:")
 	fmt.Fprintln(os.Stderr, "  cli-calculator <num> <op> <num>       calculator (+, -, *, /)")
@@ -867,4 +914,5 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  cli-calculator testing                table tests, examples, and HTTP handlers")
 	fmt.Fprintln(os.Stderr, "  cli-calculator notes                  notes API demo (no real port)")
 	fmt.Fprintln(os.Stderr, "  cli-calculator serve [addr]           HTTP server (default 127.0.0.1:8080)")
+	fmt.Fprintln(os.Stderr, "  cli-calculator bookmarks              bookmarks REST MVP demo (no real port)")
 }
